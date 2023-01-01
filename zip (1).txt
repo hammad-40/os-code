@@ -1,0 +1,201 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <string.h>
+
+// Struct used to pass parameters to threads
+struct thread_parameter{
+char* text_file;
+int num_threads;
+};
+
+// Struct used to store character and frequency information
+struct character_frequency{
+char character;
+int frequency;
+};
+
+// Struct used to store huffman encoding information
+struct huffman_encoding{
+char character;
+char* encoding;
+};
+void* zip_file(void* arg){
+    FILE* out;
+    struct thread_parameter* parameters = (struct thread_parameter*) arg;
+    char* text_file = parameters->text_file;
+    int num_threads = parameters->num_threads;
+    char* output_file = parameters->text_file;
+
+    // Create array to store character and frequency information
+    int text_file_length = strlen(text_file);
+    struct character_frequency* frequencies = malloc(sizeof(struct character_frequency)*text_file_length);
+    if (frequencies == NULL) {
+        // Handle error if malloc call fails
+        printf("Error: malloc failed to allocate memory for frequencies array\n");
+        return NULL;
+    }
+
+    // Parse through the text file and determine the frequency of each character
+    int frequencies_size = 0; // Initialize the frequencies_size variable to store the number of unique characters
+    for(int i=0;i<text_file_length;i++){
+        char current_character = text_file[i];
+        int current_character_frequency = 0;
+        // Check if character has already been encountered
+        for(int j=0;j<frequencies_size;j++){
+            if(current_character == frequencies[j].character){
+                current_character_frequency = frequencies[j].frequency + 1;
+                frequencies[j].frequency = current_character_frequency; // Update the frequency of the character
+                break;
+            }
+        }
+        // If character has not been encountered, add it to the array
+        if(current_character_frequency == 0){
+            frequencies[frequencies_size].character = current_character;
+            frequencies[frequencies_size].frequency = 1; // Set the frequency to 1 for a new character
+            frequencies_size++;
+        }
+    }
+    // Determine the huffman encoding using the characters and their corresponding frequencies
+    // Create array to store huffman encoding information
+    struct huffman_encoding* encoding = malloc(sizeof(struct huffman_encoding)*frequencies_size);
+    if (encoding == NULL) {
+        // Handle error if malloc call fails
+        printf("Error: malloc failed to allocate memory for encoding array\n");
+        free(frequencies); // Free memory allocated for frequencies array
+        return NULL;
+    }
+
+    // Generate a valid huffman encoding for each character
+    for(int i=0;i<frequencies_size;i++){
+        // Generate encoding for the current character
+        char* current_encoding = malloc(sizeof(char)*(frequencies[i].frequency + 1));
+        if (current_encoding == NULL) {
+            // Handle error if malloc call fails
+            printf("Error: malloc failed to allocate memory for current_encoding\n");
+            for(int j=0;j<i;j++){
+                free(encoding[j].encoding); // Free memory allocated for previous encodings
+            }
+            free(frequencies); // Free memory allocated for frequencies array
+            free(encoding); // Free memory allocated for encoding array
+            return NULL;
+        }
+        int encoding_index = 0; // Initialize the encoding_index variable to store the index in the encoding string
+        for(int j=0;j<frequencies[i].frequency;j++){
+            // Use a different encoding for each occurrence of the character
+            current_encoding[encoding_index++] = '0';
+        }
+        // Add null terminator to the encoding string
+        current_encoding[frequencies[i].frequency] = '\0';
+        encoding[i].character = frequencies[i].character;
+        encoding[i].encoding = current_encoding;
+    }
+
+    // Compress the text file using the huffman encoding
+    // Create a buffer to store the encoded output
+    int encoded_output_size = text_file_length * 8; // Allocate enough space for the encoded output
+    char* encoded_output = malloc(sizeof(char)*(encoded_output_size + 1));
+       if (encoded_output == NULL) {
+        // Handle error if malloc call fails
+        printf("Error: malloc failed to allocate memory for encoded_output\n");
+        for(int i=0;i<frequencies_size;i++){
+            free(encoding[i].encoding); // Free memory allocated for encodings
+        }
+        free(frequencies); // Free memory allocated for frequencies array
+        free(encoding); // Free memory allocated for encoding array
+        return NULL;
+    }
+    int encoded_output_index = 0; // Initialize the encoded_output_index variable to store the index in the encoded_output string
+    for(int i=0;i<text_file_length;i++){
+        // Find the huffman encoding for the current character
+        char* current_encoding = NULL;
+        for(int j=0;j<frequencies_size;j++){
+            if(text_file[i] == encoding[j].character){
+                current_encoding = encoding[j].encoding;
+                break;
+            }
+        }
+        // Add the encoding for the current character to the encoded_output string
+        for(int j=0;j<strlen(current_encoding);j++){
+            encoded_output[encoded_output_index++] = current_encoding[j];
+        }
+    }
+    // Add null terminator to the encoded_output string
+    encoded_output[encoded_output_index] = '\0';
+
+    // Write the encoded output to a file
+    out = fopen(output_file, "w");
+    if (out == NULL) {
+        // Handle error if file could not be opened
+        printf("Error: unable to open output file\n");
+        for(int i=0;i<frequencies_size;i++){
+            free(encoding[i].encoding); // Free memory allocated for encodings
+        }
+        free(frequencies); // Free memory allocated for frequencies array
+        free(encoding); // Free memory allocated for encoding array
+        free(encoded_output); // Free memory allocated for encoded_output
+        return NULL;
+    }
+    fprintf(out, "%s", encoded_output);
+    fclose(out);
+
+    // Free memory allocated for arrays and strings
+    for(int i=0;i<frequencies_size;i++){
+        free(encoding[i].encoding);
+    }
+    free(frequencies);
+    free(encoding);
+    free(encoded_output);
+
+    return NULL;
+}
+
+int main(int argc, char* argv[]){
+    if(argc != 3){
+        // Print error message if the number of command line arguments is invalid
+        printf("Error: invalid number of arguments\n");
+        return 1;
+    }
+    char* text_file = argv[1];
+    int num_threads = atoi(argv[2]);
+    // Check if the number of threads is valid
+    if(num_threads <= 0){
+        printf("Error: invalid number of threads\n");
+        return 1;
+    }
+
+    // Create array to store thread IDs
+    pthread_t* threads = malloc(sizeof(pthread_t)*num_threads);
+    if (threads == NULL) {
+        // Handle error if malloc call fails
+        printf("Error: malloc failed to allocate memory for threads array\n");
+        return 1;
+    }
+
+    // Create struct to pass parameters to threads
+    struct thread_parameter parameters;
+    parameters.text_file = text_file;
+    parameters.num_threads = num_threads;
+
+    // Create threads to zip the text file
+    for(int i=0;i<num_threads;i++){
+        int result = pthread_create(&threads[i], NULL, zip_file, (void*) &parameters);
+        if (result != 0) {
+            // Handle error if thread could not be created
+            printf("Error: unable to create thread\n");
+            free(threads); // Free memory allocated for threads array
+            return 1;
+        }
+    }
+
+    // Wait for threads to complete
+    for(int i=0;i<num_threads;i++){
+        pthread_join(threads[i], NULL);
+    }
+
+    // Free memory allocated for threads array
+    free(threads);
+
+    return 0;
+}
+
